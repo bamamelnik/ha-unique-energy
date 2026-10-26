@@ -12,7 +12,7 @@
  * Erzeuger und Netzbezug fließen zum Knoten, Verbraucher und Akku-Laden davon weg.
  */
 (() => {
-  const VERSION = "0.4.1"; // hängt auch an den Bild-URLs: neue Bilder → Version hochzählen
+  const VERSION = "0.5.0"; // hängt auch an den Bild-URLs: neue Bilder → Version hochzählen
 
   // Layout je Bildsatz. Pfade in Bildpixeln, nur M/L/Q/C (wird auch von
   // pfade-vorschau.py gelesen — der Block zwischen den Markern bleibt JSON).
@@ -51,6 +51,9 @@
   };
 
   const SCHWELLE_W = 10; // darunter gilt ein Fluss als still
+
+  // PV-Anlagen: bis zu drei Strings, als feine Zeile über der Summe
+  const STRINGS = ["string_1", "string_2", "string_3"];
 
   const fmtLeistung = (w) => {
     const a = Math.abs(w);
@@ -143,12 +146,16 @@
           const s = this._zahl(e.soc);
           if (s !== null) { socSum += s; socN++; }
         }
-        return { w: gueltig ? w : null, soc: socN ? socSum / socN : null, entity: c[0].leistung, anzahl: c.length, name: c[0].name };
+        return { w: gueltig ? w : null, soc: socN ? socSum / socN : null, entity: c[0].leistung, anzahl: c.length, name: c[0].name, strings: [] };
       }
       let w = this._watt(c);
       // Auto 1 ohne eigenen Sensor bekommt die Wallbox-Leistung
       if (w === null && name === "auto_1" && !c.leistung) w = this._watt(this._config.wallbox);
-      return { w, soc: this._zahl(c.soc), entity: c.leistung || c.soc, anzahl: 1, name: c.name };
+      const belegt = ROLLEN[name].typ === "pv" ? STRINGS.filter((k) => c[k]) : [];
+      const strings = belegt.map((k) => this._entitaetWatt(c[k]));
+      // Ohne Summensensor ist die Summe der Strings die Leistung, aber nur wenn alle melden
+      if (!c.leistung && strings.length) w = strings.includes(null) ? null : strings.reduce((a, x) => a + x, 0);
+      return { w, soc: this._zahl(c.soc), entity: c.leistung || c.soc || c[belegt[0]], anzahl: 1, name: c.name, strings };
     }
 
     _bauen() {
@@ -164,7 +171,7 @@
         .join("");
       const pct = ([x, y]) => `left:${(x / L.breite) * 100}%;top:${(y / L.hoehe) * 100}%`;
       const labels = aktiv
-        .map((n) => `<div class="label" data-k="${n}" style="${pct(L.komponenten[n].label)}"><span class="titel"></span><span class="wert"></span></div>`)
+        .map((n) => `<div class="label" data-k="${n}" style="${pct(L.komponenten[n].label)}"><span class="titel"></span><span class="strings"></span><span class="wert"></span></div>`)
         .join("");
       const hausLabel = this._config.haus
         ? `<div class="label haus" data-k="haus" style="${pct(L.haus_label)}"><span class="titel"></span><span class="wert"></span></div>`
@@ -230,6 +237,8 @@
         }
         el.querySelector(".titel").textContent = titel;
         el.querySelector(".wert").textContent = wert;
+        const st = el.querySelector(".strings");
+        if (st) st.textContent = this._werte(n).strings.map((x) => (x === null ? "–" : fmtLeistung(x))).join(" · ");
       }
     }
   }
@@ -243,19 +252,20 @@
   const EDITOR_KOMPONENTEN = [
     ["netz", "Netz", "mdi:transmission-tower", [], "+ = Bezug, − = Einspeisung"],
     ["haus", "Haus", "mdi:home-lightning-bolt-outline", ["abzueglich"], "Verbrauch des Hauses ohne die übrigen Komponenten"],
-    ["pv_haus", "PV Dach", "mdi:solar-panel", [], "Erzeugung"],
-    ["balkon_pv", "Balkon-PV", "mdi:solar-panel-large", [], "Erzeugung"],
-    ["scheune", "Scheune mit PV", "mdi:barn", [], "Erzeugung"],
+    ["pv_haus", "PV Dach", "mdi:solar-panel", STRINGS, "Erzeugung; leer lassen: Summe der Strings"],
+    ["balkon_pv", "Balkon-PV", "mdi:solar-panel-large", STRINGS, "Erzeugung; leer lassen: Summe der Strings"],
+    ["scheune", "Scheune mit PV", "mdi:barn", STRINGS, "Erzeugung; leer lassen: Summe der Strings"],
     ["akku", "Hausakku", "mdi:home-battery", ["soc"], "+ = lädt, − = entlädt"],
     ["waermepumpe", "Wärmepumpe", "mdi:heat-pump", [], "Verbrauch"],
     ["wallbox", "Wallbox", "mdi:ev-station", [], "Ladeleistung"],
     ["auto_1", "Auto 1", "mdi:car-electric", ["soc"], "leer lassen: übernimmt die Wallbox"],
     ["auto_2", "Auto 2", "mdi:car-electric", ["soc"], "eigene Ladeleistung, falls vorhanden"],
   ];
-  const FELDER = ["name", "leistung", "invertieren", "soc", "abzueglich"];
+  const FELDER = ["name", "leistung", "invertieren", "soc", "abzueglich", ...STRINGS];
   const LABELS = {
     bilder: "Bildordner", layout: "Bildsatz", titel: "Titel (optional)", zeigen: "Anzeigen", name: "Name",
     leistung: "Leistung (W oder kW)", invertieren: "Vorzeichen umkehren", soc: "Ladestand (%)", abzueglich: "abzüglich Leistung",
+    string_1: "String 1 (optional)", string_2: "String 2 (optional)", string_3: "String 3 (optional)",
   };
   const sensor = { entity: { filter: { domain: "sensor" } } };
 
@@ -386,8 +396,10 @@
              backdrop-filter: blur(2px); }
     .label .titel { opacity: 0.75; font-size: 0.85em; }
     .label .wert { font-weight: 600; }
+    .label .strings { font-weight: 400; font-size: 0.78em; opacity: 0.85; letter-spacing: 0.01em; }
+    .label .strings:empty { display: none; }
     .label.haus { background: rgba(24, 28, 36, 0.88); }
-    @container (max-width: 520px) { .label .titel { display: none; } .label { padding: 2px 5px; } }
+    @container (max-width: 520px) { .label .titel, .label .strings { display: none; } .label { padding: 2px 5px; } }
     @media (prefers-reduced-motion: reduce) { .fluss { animation: none; stroke-dasharray: none; stroke-width: 4; } }
   `;
 

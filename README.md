@@ -26,7 +26,7 @@ bilder: /hacsfiles/ha-unique-energy/lowpoly   # image set shipped with the card
 titel: Energie                                # optional
 netz:        { leistung: sensor.grid_power }       # + = import, − = export
 haus:        { leistung: sensor.house_power, abzueglich: sensor.wallbox_power }
-pv_haus:     { leistung: sensor.pv_roof_power }
+pv_haus:     { leistung: sensor.pv_roof_power, string_1: sensor.pv_dc1, string_2: sensor.pv_dc2 }
 balkon_pv:   { leistung: sensor.balcony_pv_power }
 scheune:     { leistung: sensor.barn_pv_power }     # barn including its PV
 akku:        { leistung: sensor.battery_power, soc: sensor.battery_soc }   # + = charging
@@ -45,6 +45,7 @@ Grid and house are part of the base image.
 | `invertieren` | `true` flips the sign |
 | `abzueglich` | entity (or list) subtracted before the sign is applied; if one is unavailable the card shows “–” |
 | `soc` | state of charge in % (battery, cars) |
+| `string_1` … `string_3` | PV only: up to three string sensors, shown in a smaller line above the total; without `leistung` their sum is the total |
 | `name` | label text |
 | `zeigen` | `false` hides the component but keeps its settings |
 
