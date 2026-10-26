@@ -1,77 +1,182 @@
 /*
- * hos-energiekarte — animierte Energieflüsse über einer Ebenen-Grafik.
+ * ha-unique-energy — animated energy flows over a layered picture of a house.
  *
- * Eigenentwicklung für home-os, veröffentlicht als ha-unique-energy (MIT).
- * Idee angelehnt an Lumina Energy Card, aber ohne deren Code oder Grafiken.
+ * MIT licensed. The idea is inspired by Lumina Energy Card; no code or
+ * graphics were taken from it.
  *
- * Aufbau: ein Grundbild, darüber je Komponente eine deckungsgleiche PNG-Ebene,
- * darüber ein SVG mit den Flüssen (Bildkoordinaten) und HTML-Beschriftungen
- * (in Prozent positioniert, damit die Schrift nicht mitskaliert).
+ * Structure: a base image, one aligned PNG layer per optional component on top,
+ * then an SVG with the flows (in image coordinates) and HTML labels (positioned
+ * in percent so the text does not scale with the picture).
  *
- * Vorzeichen: Jeder Pfad führt von der Komponente zum Knoten am Haus.
- * Erzeuger und Netzbezug fließen zum Knoten, Verbraucher und Akku-Laden davon weg.
+ * Sign convention: every path runs from its component to the node at the house.
+ * Producers and grid import flow towards the node, consumers and battery
+ * charging flow away from it.
  */
 (() => {
-  const VERSION = "0.5.0"; // hängt auch an den Bild-URLs: neue Bilder → Version hochzählen
+  const VERSION = "0.6.0"; // also appended to image URLs: bump it when images change
 
-  // Layout je Bildsatz. Pfade in Bildpixeln, nur M/L/Q/C (wird auch von
-  // pfade-vorschau.py gelesen — der Block zwischen den Markern bleibt JSON).
+  // Layout per image set. Paths in image pixels, only M/L/Q/C (also read by
+  // tools/path_preview.py — the block between the markers must stay valid JSON).
   const LAYOUTS = /*LAYOUT-START*/ {
     "lowpoly": {
-      "breite": 1376,
-      "hoehe": 768,
-      "grundbild": "basis.jpg",
-      "haus_label": [630, 360],
-      "komponenten": {
-        "scheune":     { "ebene": "scheune.png",     "pfad": "M1087,280 L1045,319 L1045,434 L880,368 L650,460 L650,384", "label": [1185, 200] },
-        "pv_haus":     { "ebene": "pv-haus.png",     "pfad": "M587,238 L630,298 L630,340",   "label": [645, 130] },
-        "balkon_pv":   { "ebene": "balkon-pv.png",   "pfad": "M770,303 L660,347",   "label": [800, 225] },
-        "waermepumpe": { "ebene": "waermepumpe.png", "pfad": "M440,375 L440,337.6 L563,386.8 L605,370",   "label": [400, 478] },
-        "akku":        { "ebene": "akku.png",        "pfad": "M552,430 L552,392.4 L563,396.8 L605,380",           "label": [515, 300] },
-        "auto_2":      { "ebene": "auto-2.png",      "pfad": "M935,470 L862,499",  "label": [1165, 515] },
-        "wallbox":     { "ebene": "wallbox.png",     "pfad": "M855,503 L693,438 L693,346.8 L655,362",   "label": [900, 420] },
-        "auto_1":      { "ebene": "auto-1.png",      "pfad": "M855,555 L855,503",   "label": [800, 650] },
-        "netz":        { "ebene": null,              "pfad": "M180,462 L403,551 L598,473 L598,385",   "label": [172, 322] }
+      "width": 1376,
+      "height": 768,
+      "base": "base.jpg",
+      "home_label": [630, 360],
+      "components": {
+        "barn":       { "layer": "barn.png",       "path": "M1087,280 L1045,319 L1045,434 L880,368 L650,460 L650,384", "label": [1185, 200] },
+        "pv_roof":    { "layer": "pv-roof.png",    "path": "M587,238 L630,298 L630,340",   "label": [645, 130] },
+        "pv_balcony": { "layer": "pv-balcony.png", "path": "M770,303 L660,347",   "label": [800, 225] },
+        "heat_pump":  { "layer": "heat-pump.png",  "path": "M440,375 L440,337.6 L563,386.8 L605,370",   "label": [400, 478] },
+        "battery":    { "layer": "battery.png",    "path": "M552,430 L552,392.4 L563,396.8 L605,380",           "label": [515, 300] },
+        "car_2":      { "layer": "car-2.png",      "path": "M935,470 L862,499",  "label": [1165, 515] },
+        "wallbox":    { "layer": "wallbox.png",    "path": "M855,503 L693,438 L693,346.8 L655,362",   "label": [900, 420] },
+        "car_1":      { "layer": "car-1.png",      "path": "M855,555 L855,503",   "label": [800, 650] },
+        "grid":       { "layer": null,             "path": "M180,462 L403,551 L598,473 L598,385",   "label": [172, 322] }
       }
     }
   } /*LAYOUT-END*/;
 
-  // Rolle je Komponente: Farbe und Richtung bei positiver Leistung
-  // (+1 = zum Knoten, -1 = vom Knoten weg).
-  const ROLLEN = {
-    pv_haus:     { name: "PV Dach",      typ: "pv",      richtung: +1 },
-    balkon_pv:   { name: "Balkon-PV",    typ: "pv",      richtung: +1 },
-    scheune:     { name: "PV Scheune",   typ: "pv",      richtung: +1 },
-    akku:        { name: "Akku",         typ: "akku",    richtung: -1 },
-    netz:        { name: "Netz",         typ: "netz",    richtung: +1 },
-    waermepumpe: { name: "Wärmepumpe",   typ: "wp",      richtung: -1 },
-    wallbox:     { name: "Wallbox",      typ: "auto",    richtung: -1 },
-    auto_1:      { name: "Auto 1",       typ: "auto",    richtung: -1 },
-    auto_2:      { name: "Auto 2",       typ: "auto",    richtung: -1 },
+  // Role per component: colour and direction at positive power
+  // (+1 = towards the node, -1 = away from it).
+  const ROLES = {
+    pv_roof:    { kind: "pv",      direction: +1 },
+    pv_balcony: { kind: "pv",      direction: +1 },
+    barn:       { kind: "pv",      direction: +1 },
+    battery:    { kind: "battery", direction: -1 },
+    grid:       { kind: "grid",    direction: +1 },
+    heat_pump:  { kind: "heat",    direction: -1 },
+    wallbox:    { kind: "car",     direction: -1 },
+    car_1:      { kind: "car",     direction: -1 },
+    car_2:      { kind: "car",     direction: -1 },
   };
 
-  const SCHWELLE_W = 10; // darunter gilt ein Fluss als still
+  const IDLE_W = 10; // below this a flow counts as idle
 
-  // PV-Anlagen: bis zu drei Strings, als feine Zeile über der Summe
+  // PV arrays: up to three strings, shown as a fine line above the total
   const STRINGS = ["string_1", "string_2", "string_3"];
 
-  const fmtLeistung = (w) => {
+  // ── Translations ────────────────────────────────────────────────────
+  const I18N = {
+    de: {
+      locale: "de-DE",
+      names: { grid: "Netz", home: "Haus", pv_roof: "PV Dach", pv_balcony: "Balkon-PV", barn: "PV Scheune", battery: "Akku",
+        heat_pump: "Wärmepumpe", wallbox: "Wallbox", car_1: "Auto 1", car_2: "Auto 2" },
+      import: "Bezug", export: "Einspeisung", charging: "lädt", discharging: "entlädt", idle: "Ruhe",
+      fields: { images: "Bildordner", layout: "Bildsatz", title: "Titel (optional)", language: "Sprache", show: "Anzeigen", name: "Name",
+        power: "Leistung (W oder kW)", invert: "Vorzeichen umkehren", soc: "Ladestand (%)", subtract: "abzüglich Leistung",
+        string: "String", optional: "optional", auto: "Automatisch (wie Home Assistant)" },
+      sections: { grid: "Netz", home: "Haus", pv_roof: "PV Dach", pv_balcony: "Balkon-PV", barn: "Scheune mit PV", battery: "Hausakku",
+        heat_pump: "Wärmepumpe", wallbox: "Wallbox", car_1: "Auto 1", car_2: "Auto 2" },
+      help: { images: "über HACS: /hacsfiles/ha-unique-energy/lowpoly", grid: "+ = Bezug, − = Einspeisung",
+        home: "Verbrauch des Hauses ohne die übrigen Komponenten", pv: "Erzeugung; leer lassen: Summe der Strings",
+        battery: "+ = lädt, − = entlädt", heat_pump: "Verbrauch", wallbox: "Ladeleistung",
+        car_1: "leer lassen: übernimmt die Wallbox", car_2: "eigene Ladeleistung, falls vorhanden" },
+      batteryList: "Mehrere Hausakkus sind als Liste konfiguriert — bitte im YAML-Modus bearbeiten.",
+    },
+    en: {
+      locale: "en-US",
+      names: { grid: "Grid", home: "Home", pv_roof: "Roof PV", pv_balcony: "Balcony PV", barn: "Barn PV", battery: "Battery",
+        heat_pump: "Heat pump", wallbox: "Wallbox", car_1: "Car 1", car_2: "Car 2" },
+      import: "Import", export: "Export", charging: "charging", discharging: "discharging", idle: "idle",
+      fields: { images: "Image folder", layout: "Image set", title: "Title (optional)", language: "Language", show: "Show", name: "Name",
+        power: "Power (W or kW)", invert: "Invert sign", soc: "State of charge (%)", subtract: "Subtract power",
+        string: "String", optional: "optional", auto: "Automatic (like Home Assistant)" },
+      sections: { grid: "Grid", home: "Home", pv_roof: "Roof PV", pv_balcony: "Balcony PV", barn: "Barn with PV", battery: "Home battery",
+        heat_pump: "Heat pump", wallbox: "Wallbox", car_1: "Car 1", car_2: "Car 2" },
+      help: { images: "via HACS: /hacsfiles/ha-unique-energy/lowpoly", grid: "+ = import, − = export",
+        home: "House consumption without the other components", pv: "Production; leave empty: sum of the strings",
+        battery: "+ = charging, − = discharging", heat_pump: "Consumption", wallbox: "Charging power",
+        car_1: "leave empty: uses the wallbox", car_2: "own charging power, if available" },
+      batteryList: "Several home batteries are configured as a list — please edit them in YAML mode.",
+    },
+    es: {
+      locale: "es-ES",
+      names: { grid: "Red", home: "Casa", pv_roof: "FV tejado", pv_balcony: "FV balcón", barn: "FV granero", battery: "Batería",
+        heat_pump: "Bomba de calor", wallbox: "Wallbox", car_1: "Coche 1", car_2: "Coche 2" },
+      import: "Importación", export: "Exportación", charging: "cargando", discharging: "descargando", idle: "en reposo",
+      fields: { images: "Carpeta de imágenes", layout: "Juego de imágenes", title: "Título (opcional)", language: "Idioma", show: "Mostrar",
+        name: "Nombre", power: "Potencia (W o kW)", invert: "Invertir signo", soc: "Estado de carga (%)", subtract: "Restar potencia",
+        string: "String", optional: "opcional", auto: "Automático (como Home Assistant)" },
+      sections: { grid: "Red", home: "Casa", pv_roof: "FV tejado", pv_balcony: "FV balcón", barn: "Granero con FV", battery: "Batería doméstica",
+        heat_pump: "Bomba de calor", wallbox: "Wallbox", car_1: "Coche 1", car_2: "Coche 2" },
+      help: { images: "vía HACS: /hacsfiles/ha-unique-energy/lowpoly", grid: "+ = importación, − = exportación",
+        home: "Consumo de la casa sin los demás componentes", pv: "Producción; vacío: suma de los strings",
+        battery: "+ = carga, − = descarga", heat_pump: "Consumo", wallbox: "Potencia de carga",
+        car_1: "vacío: usa la wallbox", car_2: "potencia de carga propia, si existe" },
+      batteryList: "Hay varias baterías configuradas como lista; edítalas en modo YAML.",
+    },
+    fr: {
+      locale: "fr-FR",
+      names: { grid: "Réseau", home: "Maison", pv_roof: "PV toit", pv_balcony: "PV balcon", barn: "PV grange", battery: "Batterie",
+        heat_pump: "Pompe à chaleur", wallbox: "Borne", car_1: "Voiture 1", car_2: "Voiture 2" },
+      import: "Soutirage", export: "Injection", charging: "en charge", discharging: "en décharge", idle: "au repos",
+      fields: { images: "Dossier d'images", layout: "Jeu d'images", title: "Titre (facultatif)", language: "Langue", show: "Afficher",
+        name: "Nom", power: "Puissance (W ou kW)", invert: "Inverser le signe", soc: "État de charge (%)", subtract: "Puissance à soustraire",
+        string: "Chaîne", optional: "facultatif", auto: "Automatique (comme Home Assistant)" },
+      sections: { grid: "Réseau", home: "Maison", pv_roof: "PV toit", pv_balcony: "PV balcon", barn: "Grange avec PV", battery: "Batterie domestique",
+        heat_pump: "Pompe à chaleur", wallbox: "Borne de recharge", car_1: "Voiture 1", car_2: "Voiture 2" },
+      help: { images: "via HACS : /hacsfiles/ha-unique-energy/lowpoly", grid: "+ = soutirage, − = injection",
+        home: "Consommation de la maison sans les autres composants", pv: "Production ; vide : somme des chaînes",
+        battery: "+ = charge, − = décharge", heat_pump: "Consommation", wallbox: "Puissance de charge",
+        car_1: "vide : reprend la borne", car_2: "puissance de charge propre, si disponible" },
+      batteryList: "Plusieurs batteries sont configurées en liste ; modifiez-les en mode YAML.",
+    },
+  };
+  const LANGUAGES = Object.keys(I18N);
+  const LANGUAGE_NAMES = { de: "Deutsch", en: "English", es: "Español", fr: "Français" };
+
+  // "auto" (or nothing) follows Home Assistant; unknown languages fall back to English
+  function resolveLanguage(config, hass) {
+    const wanted = config && config.language && config.language !== "auto"
+      ? config.language
+      : (hass && ((hass.locale && hass.locale.language) || hass.language)) || "en";
+    const short = String(wanted).toLowerCase().slice(0, 2);
+    return LANGUAGES.includes(short) ? short : "en";
+  }
+
+  // ── Legacy configuration (up to v0.5, German keys) ────────────────────
+  const LEGACY_TOP = { bilder: "images", titel: "title" };
+  const LEGACY_COMPONENTS = { netz: "grid", haus: "home", pv_haus: "pv_roof", balkon_pv: "pv_balcony", scheune: "barn",
+    akku: "battery", waermepumpe: "heat_pump", auto_1: "car_1", auto_2: "car_2" };
+  const LEGACY_FIELDS = { leistung: "power", invertieren: "invert", abzueglich: "subtract", zeigen: "show" };
+  const LEGACY_TYPE = "custom:hos-energiekarte";
+  const CARD_TYPE = "custom:unique-energy-card";
+
+  const renameKeys = (obj, map) => Object.fromEntries(Object.entries(obj).map(([k, v]) => [map[k] || k, v]));
+  const renameFields = (c) => (Array.isArray(c) ? c.map(renameFields) : c && typeof c === "object" ? renameKeys(c, LEGACY_FIELDS) : c);
+
+  // Returns the configuration with English keys; an English configuration passes unchanged
+  function normalizeConfig(config) {
+    const out = {};
+    for (const [k, v] of Object.entries(config)) {
+      if (LEGACY_TOP[k]) out[LEGACY_TOP[k]] = v;
+      else if (LEGACY_COMPONENTS[k]) out[LEGACY_COMPONENTS[k]] = renameFields(v);
+      else if (k in ROLES || k === "home") out[k] = renameFields(v);
+      else out[k] = v;
+    }
+    if (out.type === LEGACY_TYPE) out.type = CARD_TYPE;
+    return out;
+  }
+
+  const formatPower = (w, locale) => {
     const a = Math.abs(w);
     if (a < 1000) return `${Math.round(a)} W`;
-    return `${(a / 1000).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} kW`;
+    return `${(a / 1000).toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} kW`;
   };
 
-  // Dauer eines Animationszyklus: schneller bei mehr Leistung, gedeckelt
-  const dauer = (w) => Math.min(7, Math.max(0.9, 4.2 / Math.sqrt(Math.abs(w) / 1000)));
+  // Duration of one animation cycle: faster with more power, capped
+  const cycleSeconds = (w) => Math.min(7, Math.max(0.9, 4.2 / Math.sqrt(Math.abs(w) / 1000)));
 
-  class HosEnergiekarte extends HTMLElement {
+  class UniqueEnergyCard extends HTMLElement {
     setConfig(config) {
-      if (!config || !config.bilder) throw new Error("hos-energiekarte: 'bilder' fehlt (Ordner mit den Ebenen)");
+      config = normalizeConfig(config || {});
+      if (!config.images) throw new Error("unique-energy-card: 'images' is missing (folder with the layers)");
       const layout = LAYOUTS[config.layout || "lowpoly"];
-      if (!layout) throw new Error(`hos-energiekarte: unbekanntes Layout '${config.layout}'`);
+      if (!layout) throw new Error(`unique-energy-card: unknown layout '${config.layout}'`);
       this._config = config;
       this._layout = layout;
-      this._gebaut = false;
+      this._built = false;
       if (this._hass) this._render();
     }
 
@@ -85,40 +190,40 @@
     }
 
     static getStubConfig() {
-      return { bilder: "/hacsfiles/ha-unique-energy/lowpoly", netz: {}, haus: {} };
+      return { images: "/hacsfiles/ha-unique-energy/lowpoly", grid: {}, home: {} };
     }
 
     static getConfigElement() {
-      return document.createElement("hos-energiekarte-editor");
+      return document.createElement("unique-energy-card-editor");
     }
 
-    // Welche Komponenten sind konfiguriert und nicht abgeschaltet?
-    _aktive() {
-      const k = this._config;
-      return Object.keys(this._layout.komponenten).filter((n) => {
-        const c = k[n];
+    // Components that are configured and not switched off
+    _active() {
+      const cfg = this._config;
+      return Object.keys(this._layout.components).filter((n) => {
+        const c = cfg[n];
         if (!c) return false;
         if (Array.isArray(c)) return c.length > 0;
-        return c.zeigen !== false;
+        return c.show !== false;
       });
     }
 
-    // Leistung einer Entität in W, mit Einheit und optionaler Umkehr
-    _watt(cfg) {
-      if (!cfg || !cfg.leistung) return null;
-      let w = this._entitaetWatt(cfg.leistung);
+    // Power of a component in W, with unit handling and optional sign flip
+    _watts(cfg) {
+      if (!cfg || !cfg.power) return null;
+      let w = this._entityWatts(cfg.power);
       if (w === null) return null;
-      // abzueglich: Entität oder Liste, z. B. Hauszähler minus Wallbox
-      const abzug = cfg.abzueglich ? [].concat(cfg.abzueglich) : [];
-      for (const e of abzug) {
-        const x = this._entitaetWatt(e);
-        if (x === null) return null; // lieber kein Wert als ein falscher
+      // subtract: entity or list, e.g. house meter minus wallbox
+      const minus = cfg.subtract ? [].concat(cfg.subtract) : [];
+      for (const e of minus) {
+        const x = this._entityWatts(e);
+        if (x === null) return null; // better no value than a wrong one
         w -= x;
       }
-      return cfg.invertieren ? -w : w;
+      return cfg.invert ? -w : w;
     }
 
-    _entitaetWatt(entity) {
+    _entityWatts(entity) {
       const st = this._hass && this._hass.states[entity];
       if (!st) return null;
       const v = parseFloat(st.state);
@@ -127,204 +232,209 @@
       return unit === "kW" ? v * 1000 : unit === "MW" ? v * 1e6 : v;
     }
 
-    _zahl(entity) {
+    _number(entity) {
       if (!entity || !this._hass) return null;
       const st = this._hass.states[entity];
       const v = st ? parseFloat(st.state) : NaN;
       return Number.isNaN(v) ? null : v;
     }
 
-    // Werte je Komponente: { w, soc, entity, anzahl }
-    _werte(name) {
+    // Values per component: { w, soc, entity, count, name, strings }
+    _values(name) {
       const c = this._config[name];
       if (Array.isArray(c)) {
-        // mehrere Geräte (z. B. Akkus) werden summiert, SOC gemittelt
-        let w = 0, socSum = 0, socN = 0, gueltig = false;
+        // several devices (e.g. batteries) are summed, SOC averaged
+        let w = 0, socSum = 0, socN = 0, valid = false;
         for (const e of c) {
-          const x = this._watt(e);
-          if (x !== null) { w += x; gueltig = true; }
-          const s = this._zahl(e.soc);
+          const x = this._watts(e);
+          if (x !== null) { w += x; valid = true; }
+          const s = this._number(e.soc);
           if (s !== null) { socSum += s; socN++; }
         }
-        return { w: gueltig ? w : null, soc: socN ? socSum / socN : null, entity: c[0].leistung, anzahl: c.length, name: c[0].name, strings: [] };
+        return { w: valid ? w : null, soc: socN ? socSum / socN : null, entity: c[0].power, count: c.length, name: c[0].name, strings: [] };
       }
-      let w = this._watt(c);
-      // Auto 1 ohne eigenen Sensor bekommt die Wallbox-Leistung
-      if (w === null && name === "auto_1" && !c.leistung) w = this._watt(this._config.wallbox);
-      const belegt = ROLLEN[name].typ === "pv" ? STRINGS.filter((k) => c[k]) : [];
-      const strings = belegt.map((k) => this._entitaetWatt(c[k]));
-      // Ohne Summensensor ist die Summe der Strings die Leistung, aber nur wenn alle melden
-      if (!c.leistung && strings.length) w = strings.includes(null) ? null : strings.reduce((a, x) => a + x, 0);
-      return { w, soc: this._zahl(c.soc), entity: c.leistung || c.soc || c[belegt[0]], anzahl: 1, name: c.name, strings };
+      let w = this._watts(c);
+      // car 1 without its own sensor takes the wallbox power
+      if (w === null && name === "car_1" && !c.power) w = this._watts(this._config.wallbox);
+      const used = ROLES[name].kind === "pv" ? STRINGS.filter((k) => c[k]) : [];
+      const strings = used.map((k) => this._entityWatts(c[k]));
+      // Without a total sensor the strings add up to the power, but only if all of them report
+      if (!c.power && strings.length) w = strings.includes(null) ? null : strings.reduce((a, x) => a + x, 0);
+      return { w, soc: this._number(c.soc), entity: c.power || c.soc || c[used[0]], count: 1, name: c.name, strings };
     }
 
-    _bauen() {
+    _build() {
       const L = this._layout;
-      const aktiv = this._aktive();
-      const pfad = (this._config.bilder || "").replace(/\/$/, "");
-      const ebenen = aktiv
-        .filter((n) => L.komponenten[n].ebene)
-        .map((n) => `<img class="ebene" src="${pfad}/${L.komponenten[n].ebene}?v=${VERSION}" alt="">`)
+      const active = this._active();
+      const dir = (this._config.images || "").replace(/\/$/, "");
+      const layers = active
+        .filter((n) => L.components[n].layer)
+        .map((n) => `<img class="layer" src="${dir}/${L.components[n].layer}?v=${VERSION}" alt="">`)
         .join("");
-      const fluesse = aktiv
-        .map((n) => `<path class="spur" data-k="${n}" d="${L.komponenten[n].pfad}"/><path class="fluss" data-k="${n}" d="${L.komponenten[n].pfad}"/>`)
+      const flows = active
+        .map((n) => `<path class="track" data-k="${n}" d="${L.components[n].path}"/><path class="flow" data-k="${n}" d="${L.components[n].path}"/>`)
         .join("");
-      const pct = ([x, y]) => `left:${(x / L.breite) * 100}%;top:${(y / L.hoehe) * 100}%`;
-      const labels = aktiv
-        .map((n) => `<div class="label" data-k="${n}" style="${pct(L.komponenten[n].label)}"><span class="titel"></span><span class="strings"></span><span class="wert"></span></div>`)
+      const pct = ([x, y]) => `left:${(x / L.width) * 100}%;top:${(y / L.height) * 100}%`;
+      const labels = active
+        .map((n) => `<div class="label" data-k="${n}" style="${pct(L.components[n].label)}"><span class="title"></span><span class="strings"></span><span class="value"></span></div>`)
         .join("");
-      const hausLabel = this._config.haus
-        ? `<div class="label haus" data-k="haus" style="${pct(L.haus_label)}"><span class="titel"></span><span class="wert"></span></div>`
+      const homeLabel = this._config.home
+        ? `<div class="label home" data-k="home" style="${pct(L.home_label)}"><span class="title"></span><span class="value"></span></div>`
         : "";
 
       if (!this.shadowRoot) this.attachShadow({ mode: "open" });
       this.shadowRoot.innerHTML = `
-        <style>${STIL}</style>
+        <style>${STYLE}</style>
         <ha-card>
-          ${this._config.titel ? `<div class="kopf">${this._config.titel}</div>` : ""}
-          <div class="buehne" style="aspect-ratio:${L.breite}/${L.hoehe}">
-            <img class="ebene" src="${pfad}/${L.grundbild}?v=${VERSION}" alt="">
-            ${ebenen}
-            <svg viewBox="0 0 ${L.breite} ${L.hoehe}" preserveAspectRatio="none">${fluesse}</svg>
-            ${labels}${hausLabel}
+          ${this._config.title ? `<div class="header">${this._config.title}</div>` : ""}
+          <div class="stage" style="aspect-ratio:${L.width}/${L.height}">
+            <img class="layer" src="${dir}/${L.base}?v=${VERSION}" alt="">
+            ${layers}
+            <svg viewBox="0 0 ${L.width} ${L.height}" preserveAspectRatio="none">${flows}</svg>
+            ${labels}${homeLabel}
           </div>
         </ha-card>`;
 
       this.shadowRoot.querySelectorAll(".label").forEach((el) => {
         el.addEventListener("click", () => {
-          const w = el.dataset.k === "haus" ? { entity: this._config.haus.leistung } : this._werte(el.dataset.k);
-          if (!w.entity) return;
-          this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: w.entity }, bubbles: true, composed: true }));
+          const v = el.dataset.k === "home" ? { entity: this._config.home.power } : this._values(el.dataset.k);
+          if (!v.entity) return;
+          this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: v.entity }, bubbles: true, composed: true }));
         });
       });
-      this._gebaut = true;
+      this._built = true;
     }
 
     _render() {
-      if (!this._gebaut) this._bauen();
+      if (!this._built) this._build();
       const root = this.shadowRoot;
+      const t = I18N[resolveLanguage(this._config, this._hass)];
+      const fmt = (w) => formatPower(w, t.locale);
 
-      for (const el of root.querySelectorAll(".fluss")) {
+      for (const el of root.querySelectorAll(".flow")) {
         const n = el.dataset.k;
-        const rolle = ROLLEN[n];
-        const { w } = this._werte(n);
-        const still = w === null || Math.abs(w) < SCHWELLE_W;
-        let typ = rolle.typ;
-        if (n === "netz") typ = w !== null && w < 0 ? "einspeisung" : "bezug";
-        const richtung = rolle.richtung * (w !== null && w < 0 ? -1 : 1);
-        el.setAttribute("class", `fluss ${typ}${still ? " still" : ""}${richtung < 0 ? " rueck" : ""}`);
-        el.previousElementSibling.setAttribute("class", `spur ${typ}${still ? "" : " aktiv"}`);
-        if (!still) el.style.setProperty("--dauer", `${dauer(w).toFixed(2)}s`);
+        const role = ROLES[n];
+        const { w } = this._values(n);
+        const idle = w === null || Math.abs(w) < IDLE_W;
+        let kind = role.kind;
+        if (n === "grid") kind = w !== null && w < 0 ? "export" : "import";
+        const direction = role.direction * (w !== null && w < 0 ? -1 : 1);
+        el.setAttribute("class", `flow ${kind}${idle ? " idle" : ""}${direction < 0 ? " reverse" : ""}`);
+        el.previousElementSibling.setAttribute("class", `track ${kind}${idle ? "" : " active"}`);
+        if (!idle) el.style.setProperty("--cycle", `${cycleSeconds(w).toFixed(2)}s`);
       }
 
       for (const el of root.querySelectorAll(".label")) {
         const n = el.dataset.k;
-        let titel, wert;
-        if (n === "haus") {
-          titel = this._config.haus.name || "Haus";
-          // Differenzen zweier Zähler können kurz unter null fallen
-          const w = this._watt(this._config.haus);
-          wert = w === null ? "–" : fmtLeistung(Math.max(0, w));
+        let title, value;
+        if (n === "home") {
+          title = this._config.home.name || t.names.home;
+          // the difference of two meters can briefly drop below zero
+          const w = this._watts(this._config.home);
+          value = w === null ? "–" : fmt(Math.max(0, w));
         } else {
-          const v = this._werte(n);
-          titel = v.name || ROLLEN[n].name;
-          if (v.anzahl > 1) titel += ` ×${v.anzahl}`;
-          if (v.soc !== null) titel += ` · ${Math.round(v.soc)} %`;
-          if (v.w === null) wert = "–";
-          else if (n === "netz") wert = Math.abs(v.w) < SCHWELLE_W ? "0 W" : `${v.w < 0 ? "Einspeisung" : "Bezug"} ${fmtLeistung(v.w)}`;
-          else if (n === "akku") wert = Math.abs(v.w) < SCHWELLE_W ? "Ruhe" : `${v.w > 0 ? "lädt" : "entlädt"} ${fmtLeistung(v.w)}`;
-          else wert = fmtLeistung(v.w);
+          const v = this._values(n);
+          title = v.name || t.names[n];
+          if (v.count > 1) title += ` ×${v.count}`;
+          if (v.soc !== null) title += ` · ${Math.round(v.soc)} %`;
+          if (v.w === null) value = "–";
+          else if (n === "grid") value = Math.abs(v.w) < IDLE_W ? "0 W" : `${v.w < 0 ? t.export : t.import} ${fmt(v.w)}`;
+          else if (n === "battery") value = Math.abs(v.w) < IDLE_W ? t.idle : `${v.w > 0 ? t.charging : t.discharging} ${fmt(v.w)}`;
+          else value = fmt(v.w);
+          el.querySelector(".strings").textContent = v.strings.map((x) => (x === null ? "–" : fmt(x))).join(" · ");
         }
-        el.querySelector(".titel").textContent = titel;
-        el.querySelector(".wert").textContent = wert;
-        const st = el.querySelector(".strings");
-        if (st) st.textContent = this._werte(n).strings.map((x) => (x === null ? "–" : fmtLeistung(x))).join(" · ");
+        el.querySelector(".title").textContent = title;
+        el.querySelector(".value").textContent = value;
       }
     }
   }
 
-  // ── Grafischer Editor ────────────────────────────────────────────────
-  // Baut auf HAs eigenem ha-form auf (wie die eingebauten Karten). Formulardaten:
-  // je Komponente ein Objekt mit dem Zusatzfeld „zeigen“; ausForm() macht daraus
-  // wieder die Kartenkonfiguration und lässt unbekannte Schlüssel stehen.
+  // ── Graphical editor ────────────────────────────────────────────────
+  // Built on Home Assistant's own ha-form (like the built-in cards). Form data:
+  // one object per component with the extra field "show"; fromForm() turns it
+  // back into the card configuration and leaves unknown keys alone.
 
-  // Schlüssel, Titel, Icon, Zusatzfelder, Hilfe zur Leistung
-  const EDITOR_KOMPONENTEN = [
-    ["netz", "Netz", "mdi:transmission-tower", [], "+ = Bezug, − = Einspeisung"],
-    ["haus", "Haus", "mdi:home-lightning-bolt-outline", ["abzueglich"], "Verbrauch des Hauses ohne die übrigen Komponenten"],
-    ["pv_haus", "PV Dach", "mdi:solar-panel", STRINGS, "Erzeugung; leer lassen: Summe der Strings"],
-    ["balkon_pv", "Balkon-PV", "mdi:solar-panel-large", STRINGS, "Erzeugung; leer lassen: Summe der Strings"],
-    ["scheune", "Scheune mit PV", "mdi:barn", STRINGS, "Erzeugung; leer lassen: Summe der Strings"],
-    ["akku", "Hausakku", "mdi:home-battery", ["soc"], "+ = lädt, − = entlädt"],
-    ["waermepumpe", "Wärmepumpe", "mdi:heat-pump", [], "Verbrauch"],
-    ["wallbox", "Wallbox", "mdi:ev-station", [], "Ladeleistung"],
-    ["auto_1", "Auto 1", "mdi:car-electric", ["soc"], "leer lassen: übernimmt die Wallbox"],
-    ["auto_2", "Auto 2", "mdi:car-electric", ["soc"], "eigene Ladeleistung, falls vorhanden"],
+  // key, icon, extra fields, help text for the power field
+  const EDITOR_COMPONENTS = [
+    ["grid", "mdi:transmission-tower", [], "grid"],
+    ["home", "mdi:home-lightning-bolt-outline", ["subtract"], "home"],
+    ["pv_roof", "mdi:solar-panel", STRINGS, "pv"],
+    ["pv_balcony", "mdi:solar-panel-large", STRINGS, "pv"],
+    ["barn", "mdi:barn", STRINGS, "pv"],
+    ["battery", "mdi:home-battery", ["soc"], "battery"],
+    ["heat_pump", "mdi:heat-pump", [], "heat_pump"],
+    ["wallbox", "mdi:ev-station", [], "wallbox"],
+    ["car_1", "mdi:car-electric", ["soc"], "car_1"],
+    ["car_2", "mdi:car-electric", ["soc"], "car_2"],
   ];
-  const FELDER = ["name", "leistung", "invertieren", "soc", "abzueglich", ...STRINGS];
-  const LABELS = {
-    bilder: "Bildordner", layout: "Bildsatz", titel: "Titel (optional)", zeigen: "Anzeigen", name: "Name",
-    leistung: "Leistung (W oder kW)", invertieren: "Vorzeichen umkehren", soc: "Ladestand (%)", abzueglich: "abzüglich Leistung",
-    string_1: "String 1 (optional)", string_2: "String 2 (optional)", string_3: "String 3 (optional)",
-  };
+  const FIELDS = ["name", "power", "invert", "soc", "subtract", ...STRINGS];
   const sensor = { entity: { filter: { domain: "sensor" } } };
 
-  const listenAkku = (cfg) => Array.isArray(cfg.akku);
+  const batteryList = (cfg) => Array.isArray(cfg.battery);
 
-  function schemaFuer(cfg) {
-    const komponenten = EDITOR_KOMPONENTEN.filter(([k]) => !(k === "akku" && listenAkku(cfg))).map(([k, titel, icon, extra, hilfe]) => ({
-      type: "expandable", name: k, title: titel, icon,
+  function fieldLabel(name, t) {
+    const i = STRINGS.indexOf(name);
+    if (i >= 0) return `${t.fields.string} ${i + 1} (${t.fields.optional})`;
+    return t.fields[name] ?? name;
+  }
+
+  function schemaFor(cfg, t) {
+    const components = EDITOR_COMPONENTS.filter(([k]) => !(k === "battery" && batteryList(cfg))).map(([k, icon, extra, help]) => ({
+      type: "expandable", name: k, title: t.sections[k], icon,
       schema: [
-        { type: "grid", name: "", schema: [{ name: "zeigen", selector: { boolean: {} } }, { name: "name", selector: { text: {} } }] },
-        { name: "leistung", selector: sensor, hilfe },
+        { type: "grid", name: "", schema: [{ name: "show", selector: { boolean: {} } }, { name: "name", selector: { text: {} } }] },
+        { name: "power", selector: sensor, help: t.help[help] },
         ...extra.map((f) => ({ name: f, selector: sensor })),
-        { name: "invertieren", selector: { boolean: {} } },
+        { name: "invert", selector: { boolean: {} } },
       ],
     }));
+    const languages = [{ value: "auto", label: t.fields.auto }, ...LANGUAGES.map((l) => ({ value: l, label: LANGUAGE_NAMES[l] }))];
     return [
-      { name: "bilder", required: true, selector: { text: {} }, hilfe: "über HACS: /hacsfiles/ha-unique-energy/lowpoly" },
+      { name: "images", required: true, selector: { text: {} }, help: t.help.images },
       { type: "grid", name: "", schema: [
         { name: "layout", selector: { select: { mode: "dropdown", options: Object.keys(LAYOUTS) } } },
-        { name: "titel", selector: { text: {} } },
+        { name: "language", selector: { select: { mode: "dropdown", options: languages } } },
       ] },
-      ...komponenten,
+      { name: "title", selector: { text: {} } },
+      ...components,
     ];
   }
 
-  function zuForm(cfg) {
-    const d = { bilder: cfg.bilder || "", layout: cfg.layout || "lowpoly", titel: cfg.titel || "" };
-    for (const [k] of EDITOR_KOMPONENTEN) {
-      if (k === "akku" && listenAkku(cfg)) continue;
+  function toForm(cfg) {
+    const d = { images: cfg.images || "", layout: cfg.layout || "lowpoly", language: cfg.language || "auto", title: cfg.title || "" };
+    for (const [k] of EDITOR_COMPONENTS) {
+      if (k === "battery" && batteryList(cfg)) continue;
       const c = cfg[k];
-      d[k] = { ...(c || {}), zeigen: !!c && c.zeigen !== false };
+      d[k] = { ...(c || {}), show: !!c && c.show !== false };
     }
     return d;
   }
 
-  function ausForm(d, alt) {
-    const neu = { ...alt, bilder: d.bilder || "" };
-    if (d.layout && d.layout !== "lowpoly") neu.layout = d.layout; else delete neu.layout;
-    if (d.titel) neu.titel = d.titel; else delete neu.titel;
-    for (const [k] of EDITOR_KOMPONENTEN) {
-      if (k === "akku" && listenAkku(alt)) continue; // Liste bleibt, wie sie ist
+  function fromForm(d, old) {
+    const next = { ...old, images: d.images || "" };
+    if (d.layout && d.layout !== "lowpoly") next.layout = d.layout; else delete next.layout;
+    if (d.language && d.language !== "auto") next.language = d.language; else delete next.language;
+    if (d.title) next.title = d.title; else delete next.title;
+    for (const [k] of EDITOR_COMPONENTS) {
+      if (k === "battery" && batteryList(old)) continue; // a list stays as it is
       const f = d[k] || {};
-      const obj = { ...(alt[k] || {}) };
-      delete obj.zeigen;
-      for (const feld of FELDER) {
-        const v = f[feld];
-        if (v === undefined || v === "" || v === false || v === null) delete obj[feld]; else obj[feld] = v;
+      const obj = { ...(old[k] || {}) };
+      delete obj.show;
+      for (const field of FIELDS) {
+        const v = f[field];
+        if (v === undefined || v === "" || v === false || v === null) delete obj[field]; else obj[field] = v;
       }
-      if (f.zeigen) neu[k] = obj;
-      else if (Object.keys(obj).length) neu[k] = { ...obj, zeigen: false }; // Einstellungen behalten, nur ausblenden
-      else delete neu[k];
+      if (f.show) next[k] = obj;
+      else if (Object.keys(obj).length) next[k] = { ...obj, show: false }; // keep the settings, only hide
+      else delete next[k];
     }
-    return neu;
+    return next;
   }
 
-  class HosEnergiekarteEditor extends HTMLElement {
+  class UniqueEnergyCardEditor extends HTMLElement {
     setConfig(config) {
-      this._config = config;
-      this._zeichnen();
+      this._config = normalizeConfig(config || {});
+      this._draw();
     }
 
     set hass(hass) {
@@ -333,81 +443,86 @@
     }
 
     async connectedCallback() {
-      // ha-form lädt HA erst bei Bedarf; die Hilfsfunktionen der Karten ziehen es nach.
+      // HA loads ha-form on demand; the card helpers pull it in.
       if (!customElements.get("ha-form") && window.loadCardHelpers) {
-        const helfer = await window.loadCardHelpers();
-        const karte = await helfer.createCardElement({ type: "entities", entities: [] });
-        await karte.constructor.getConfigElement?.();
+        const helpers = await window.loadCardHelpers();
+        const card = await helpers.createCardElement({ type: "entities", entities: [] });
+        await card.constructor.getConfigElement?.();
       }
       await customElements.whenDefined("ha-form");
-      this._zeichnen();
+      this._draw();
     }
 
-    _zeichnen() {
+    _draw() {
       if (!this._config || !customElements.get("ha-form")) return;
+      const t = () => I18N[resolveLanguage(this._config, this._hass)];
       if (!this._form) {
-        this._hinweis = document.createElement("ha-alert");
-        this._hinweis.alertType = "info";
-        this._hinweis.textContent = "Mehrere Hausakkus sind als Liste konfiguriert — bitte im YAML-Modus bearbeiten.";
+        this._notice = document.createElement("ha-alert");
+        this._notice.alertType = "info";
         this._form = document.createElement("ha-form");
-        this._form.computeLabel = (s) => LABELS[s.name] ?? s.name;
-        this._form.computeHelper = (s) => s.hilfe; // eigener Schlüssel im Schema, ha-form reicht ihn durch
+        this._form.computeLabel = (s) => fieldLabel(s.name, t());
+        this._form.computeHelper = (s) => s.help; // own key in the schema, ha-form passes it through
         this._form.addEventListener("value-changed", (ev) => {
           ev.stopPropagation();
-          const neu = ausForm(ev.detail.value, this._config);
-          if (JSON.stringify(neu) === JSON.stringify(this._config)) return;
-          this._config = neu;
-          this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: neu }, bubbles: true, composed: true }));
+          const next = fromForm(ev.detail.value, this._config);
+          if (JSON.stringify(next) === JSON.stringify(this._config)) return;
+          const relabel = next.language !== this._config.language;
+          this._config = next;
+          if (relabel) this._draw(); // labels and help texts follow the chosen language
+          this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: next }, bubbles: true, composed: true }));
         });
-        this.append(this._hinweis, this._form);
+        this.append(this._notice, this._form);
       }
-      this._hinweis.style.display = listenAkku(this._config) ? "" : "none";
+      this._notice.textContent = t().batteryList;
+      this._notice.style.display = batteryList(this._config) ? "" : "none";
       this._form.hass = this._hass;
-      this._form.schema = schemaFuer(this._config);
-      this._form.data = zuForm(this._config);
+      this._form.schema = schemaFor(this._config, t());
+      this._form.data = toForm(this._config);
     }
   }
 
-  const STIL = `
+  const STYLE = `
     :host { display: block; }
     ha-card { overflow: hidden; display: block; background: var(--ha-card-background, var(--card-background-color, #fff)); border-radius: var(--ha-card-border-radius, 12px); }
-    .kopf { padding: 12px 16px 0; font-size: 1.1em; font-weight: 500; color: var(--primary-text-color, #222); }
-    .buehne { position: relative; width: 100%; container-type: inline-size; }
-    .ebene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; user-select: none; }
+    .header { padding: 12px 16px 0; font-size: 1.1em; font-weight: 500; color: var(--primary-text-color, #222); }
+    .stage { position: relative; width: 100%; container-type: inline-size; }
+    .layer { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; user-select: none; }
     svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-    .spur { fill: none; stroke: rgba(40, 46, 58, 0.16); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
-    /* Linie halb so deckend wie die Punkte (inkl. Glühen), damit sich beide abheben */
-    .spur.aktiv { stroke: currentColor; stroke-opacity: 0.75; stroke-width: 2.5; opacity: 0.5;
-                  filter: drop-shadow(0 0 2px currentColor) drop-shadow(0 0 5px currentColor); }
-    .fluss { fill: none; stroke: currentColor; stroke-width: 5.6; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 0.1 18;
-             animation: lauf var(--dauer, 4s) linear infinite; filter: drop-shadow(0 0 2px currentColor); }
-    .fluss.rueck { animation-direction: reverse; }
-    .fluss.still { stroke-opacity: 0; animation: none; }
+    .track { fill: none; stroke: rgba(40, 46, 58, 0.16); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+    /* line (including its glow) half as opaque as the dots, so both stand apart */
+    .track.active { stroke: currentColor; stroke-opacity: 0.75; stroke-width: 2.5; opacity: 0.5;
+                    filter: drop-shadow(0 0 2px currentColor) drop-shadow(0 0 5px currentColor); }
+    .flow { fill: none; stroke: currentColor; stroke-width: 5.6; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 0.1 18;
+            animation: run var(--cycle, 4s) linear infinite; filter: drop-shadow(0 0 2px currentColor); }
+    .flow.reverse { animation-direction: reverse; }
+    .flow.idle { stroke-opacity: 0; animation: none; }
     .pv { color: #f5b400; }
-    .akku { color: #2f8cff; }
-    .bezug { color: #e5484d; }
-    .einspeisung { color: #2fa36b; }
-    .wp { color: #f76b15; }
-    .auto { color: #8e4ec6; }
-    @keyframes lauf { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -180; } }
+    .battery { color: #2f8cff; }
+    .import { color: #e5484d; }
+    .export { color: #2fa36b; }
+    .heat { color: #f76b15; }
+    .car { color: #8e4ec6; }
+    @keyframes run { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -180; } }
     .label { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center;
              padding: 3px 8px; border-radius: 8px; background: rgba(24, 28, 36, 0.78); color: #fff; cursor: pointer;
              font: 500 clamp(9px, 1.6cqi, 14px)/1.25 var(--ha-font-family-body, system-ui, sans-serif); white-space: nowrap;
              backdrop-filter: blur(2px); }
-    .label .titel { opacity: 0.75; font-size: 0.85em; }
-    .label .wert { font-weight: 600; }
+    .label .title { opacity: 0.75; font-size: 0.85em; }
+    .label .value { font-weight: 600; }
     .label .strings { font-weight: 400; font-size: 0.78em; opacity: 0.85; letter-spacing: 0.01em; }
     .label .strings:empty { display: none; }
-    .label.haus { background: rgba(24, 28, 36, 0.88); }
-    @container (max-width: 520px) { .label .titel, .label .strings { display: none; } .label { padding: 2px 5px; } }
-    @media (prefers-reduced-motion: reduce) { .fluss { animation: none; stroke-dasharray: none; stroke-width: 4; } }
+    .label.home { background: rgba(24, 28, 36, 0.88); }
+    @container (max-width: 520px) { .label .title, .label .strings { display: none; } .label { padding: 2px 5px; } }
+    @media (prefers-reduced-motion: reduce) { .flow { animation: none; stroke-dasharray: none; stroke-width: 4; } }
   `;
 
-  if (!customElements.get("hos-energiekarte")) {
-    customElements.define("hos-energiekarte", HosEnergiekarte);
-    customElements.define("hos-energiekarte-editor", HosEnergiekarteEditor);
+  if (!customElements.get("unique-energy-card")) {
+    customElements.define("unique-energy-card", UniqueEnergyCard);
+    customElements.define("unique-energy-card-editor", UniqueEnergyCardEditor);
+    // Old element name (up to v0.5): keeps existing dashboards working, not offered in the card picker
+    if (!customElements.get("hos-energiekarte")) customElements.define("hos-energiekarte", class extends UniqueEnergyCard {});
     window.customCards = window.customCards || [];
-    window.customCards.push({ type: "hos-energiekarte", name: "HOS Energiekarte", description: "Energieflüsse über einer Ebenen-Grafik", preview: true });
-    console.info(`%c hos-energiekarte ${VERSION} `, "background:#2f8cff;color:#fff;border-radius:3px");
+    window.customCards.push({ type: "unique-energy-card", name: "Unique Energy Card", description: "Animated energy flows over a layered house picture", preview: true });
+    console.info(`%c unique-energy-card ${VERSION} `, "background:#2f8cff;color:#fff;border-radius:3px");
   }
 })();

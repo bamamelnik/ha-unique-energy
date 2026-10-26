@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Card test</title>
+<style>body { font: 14px/1.5 monospace; margin: 16px; } .ok { color: #2fa36b; } .fail { color: #e5484d; }</style>
+</head>
+<body>
+<p>Tests the card and its graphical editor against a stand-in <code>ha-form</code> (the real one only exists inside Home Assistant).
+Open in a browser or run headless; the result is in <code>#out</code>.</p>
+<pre id="out">running …</pre>
+<script>
+  // Stand-in for HA's ha-form: keeps what the editor sets and can fake user input.
+  customElements.define("ha-form", class extends HTMLElement {
+    input(value) { this.dispatchEvent(new CustomEvent("value-changed", { detail: { value } })); }
+  });
+  customElements.define("ha-alert", class extends HTMLElement {});
+</script>
+<script src="../dist/ha-unique-energy.js"></script>
+<script>
+  const results = [];
+  const check = (name, condition, info = "") => results.push([name, !!condition, info]);
+  const copy = (x) => JSON.parse(JSON.stringify(x));
+  const watts = (w) => ({ state: String(w), attributes: { unit_of_measurement: "W" } });
+
+  const BASE = {
+    type: "custom:unique-energy-card", images: "/hacsfiles/ha-unique-energy/lowpoly", grid_options: { columns: "full" },
+    grid: { power: "sensor.grid" },
+    home: { name: "Home", power: "sensor.house", subtract: "sensor.wallbox" },
+    pv_roof: { name: "Roof", power: "sensor.pv" },
+    battery: { name: "Battery", power: "sensor.battery", soc: "sensor.battery_soc" },
+    wallbox: { power: "sensor.wallbox" },
+    car_1: { name: "My car", soc: "sensor.car_soc" },
+  };
+
+  async function run() {
+    const ed = document.createElement("unique-energy-card-editor");
+    document.body.appendChild(ed);
+    ed.hass = { states: {}, locale: { language: "de" } };
+    ed.setConfig(copy(BASE));
+    await customElements.whenDefined("ha-form");
+    await new Promise((r) => setTimeout(r, 50));
+    const form = ed.querySelector("ha-form");
+    let last = null;
+    ed.addEventListener("config-changed", (e) => (last = e.detail.config));
+
+    // 1. Form data from the configuration
+    const d = copy(form.data);
+    check("form: battery shown with SOC", d.battery.show === true && d.battery.soc === "sensor.battery_soc");
+    check("form: barn hidden", d.barn.show === false);
+    check("form: car 1 shown without power", d.car_1.show === true && !d.car_1.power);
+    check("form: language auto", d.language === "auto");
+    check("schema: 10 components + images, grid row, title", form.schema.length === 13, form.schema.length);
+    check("help text on grid power (German via HA locale)", form.computeHelper(form.schema.find((s) => s.name === "grid").schema[1]).includes("Bezug"));
+    check("label translated", form.computeLabel({ name: "invert" }) === "Vorzeichen umkehren");
+    check("string label", form.computeLabel({ name: "string_2" }) === "String 2 (optional)");
+
+    // 2. Unchanged data back → no event
+    form.input(copy(d));
+    check("unchanged: no event", last === null);
+
+    // 3. Switch on the barn with a sensor
+    let e = copy(d); e.barn = { show: true, power: "sensor.barn_pv" };
+    form.input(e);
+    check("barn switched on", last && last.barn && last.barn.power === "sensor.barn_pv" && !("show" in last.barn), JSON.stringify(last && last.barn));
+    check("grid_options and type kept", last.grid_options.columns === "full" && last.type === "custom:unique-energy-card");
+
+    // 4. Hide the battery: settings stay, show:false
+    e = copy(form.data); e.battery.show = false;
+    form.input(e);
+    check("battery hidden, sensor kept", last.battery.show === false && last.battery.power === "sensor.battery", JSON.stringify(last.battery));
+
+    // 5. Hide a component without content → key disappears
+    e = copy(form.data); e.barn = { show: false };
+    form.input(e);
+    check("empty barn removed", !("barn" in last));
+
+    // 6. Clear a field, invert the sign, set a title
+    e = copy(form.data); e.pv_roof.name = ""; e.grid.invert = true; e.title = "Energy";
+    form.input(e);
+    check("empty field removed", !("name" in last.pv_roof));
+    check("invert set", last.grid.invert === true);
+    check("title set", last.title === "Energy");
+    e = copy(form.data); e.grid.invert = false; e.title = "";
+    form.input(e);
+    check("invert false omitted", !("invert" in last.grid));
+    check("empty title removed", !("title" in last));
+
+    // 7. Battery as a list: not in the form, kept unchanged, notice visible
+    const list = copy(BASE); list.battery = [{ power: "sensor.a" }, { power: "sensor.b", soc: "sensor.b_soc" }];
+    ed.setConfig(list);
+    check("list: no battery in schema", !form.schema.some((s) => s.name === "battery"));
+    check("list: notice visible and German", ed.querySelector("ha-alert").style.display === "" && ed.querySelector("ha-alert").textContent.startsWith("Mehrere"));
+    e = copy(form.data); e.title = "X";
+    form.input(e);
+    check("list kept", JSON.stringify(last.battery) === JSON.stringify(list.battery));
+
+    // 8. PV strings in the editor
+    ed.setConfig(copy(BASE));
+    const roof = form.schema.find((s) => s.name === "pv_roof").schema.map((s) => s.name);
+    check("strings in PV schema", ["string_1", "string_2", "string_3"].every((k) => roof.includes(k)));
+    check("no strings on the battery", !form.schema.find((s) => s.name === "battery").schema.some((s) => s.name === "string_1"));
+    e = copy(form.data); e.pv_roof.string_1 = "sensor.east"; e.pv_roof.string_2 = "sensor.west";
+    form.input(e);
+    check("strings saved", last.pv_roof.string_1 === "sensor.east" && last.pv_roof.string_2 === "sensor.west" && !("string_3" in last.pv_roof), JSON.stringify(last.pv_roof));
+    e = copy(form.data); e.pv_roof.string_2 = "";
+    form.input(e);
+    check("cleared string removed", !("string_2" in last.pv_roof));
+
+    // 9. Language in the editor: chosen language wins over HA, "auto" is not stored
+    e = copy(form.data); e.language = "fr";
+    form.input(e);
+    check("language stored", last.language === "fr");
+    check("editor relabels to French", form.computeLabel({ name: "invert" }) === "Inverser le signe" && form.schema.find((s) => s.name === "barn").title === "Grange avec PV");
+    e = copy(form.data); e.language = "auto";
+    form.input(e);
+    check("auto removes the key", !("language" in last));
+
+    // 10. Legacy German configuration is read and written back in English
+    ed.setConfig({ type: "custom:hos-energiekarte", bilder: "/x", titel: "T", netz: { leistung: "sensor.n", invertieren: true },
+      akku: { leistung: "sensor.a", zeigen: false }, pv_haus: { leistung: "sensor.p", string_1: "sensor.s" } });
+    check("legacy: editor sees English keys", form.data.grid.power === "sensor.n" && form.data.grid.invert === true && form.data.battery.show === false && form.data.pv_roof.string_1 === "sensor.s");
+    e = copy(form.data); e.title = "T2";
+    form.input(e);
+    check("legacy: written back in English", last.type === "custom:unique-energy-card" && last.images === "/x" && last.grid.power === "sensor.n" &&
+      !("netz" in last) && !("bilder" in last) && !("titel" in last) && last.battery.show === false, JSON.stringify(last));
+
+    // 11. Card: fine line above the total, sum from strings, languages
+    const states = { "sensor.n": watts(100), "sensor.h": watts(500), "sensor.pv": watts(3000), "sensor.s1": watts(1800),
+      "sensor.s2": watts(1200), "sensor.s3": watts(2500), "sensor.s4": watts(750), "sensor.b": watts(400), "sensor.bat": watts(-1500) };
+    const card = document.createElement("unique-energy-card");
+    document.body.appendChild(card);
+    const cfg = { images: "../dist/lowpoly", language: "de", grid: { power: "sensor.n" }, home: { power: "sensor.h" },
+      pv_roof: { power: "sensor.pv", string_1: "sensor.s1", string_2: "sensor.s2" },
+      barn: { string_1: "sensor.s3", string_2: "sensor.s4" }, pv_balcony: { power: "sensor.b" }, battery: { power: "sensor.bat" } };
+    card.setConfig(cfg);
+    card.hass = { states, locale: { language: "en" } };
+    const lab = (k, cls) => card.shadowRoot.querySelector(`.label[data-k="${k}"] .${cls}`).textContent;
+    check("roof: strings above the total", lab("pv_roof", "strings") === "1,8 kW · 1,2 kW" && lab("pv_roof", "value") === "3,0 kW", lab("pv_roof", "strings") + " / " + lab("pv_roof", "value"));
+    check("barn: sum from strings", lab("barn", "value") === "3,3 kW", lab("barn", "value"));
+    check("balcony without strings: empty line", lab("pv_balcony", "strings") === "");
+    const order = [...card.shadowRoot.querySelector('.label[data-k="pv_roof"]').children].map((x) => x.className);
+    check("order title, strings, value", order.join() === "title,strings,value", order.join());
+    check("German: language wins over HA", lab("grid", "value") === "Bezug 100 W" && lab("battery", "value") === "entlädt 1,5 kW", lab("grid", "value") + " / " + lab("battery", "value"));
+    const expect = { en: ["Grid", "Import 100 W", "discharging 1.5 kW", "Roof PV"], es: ["Red", "Importación 100 W", "descargando 1,5 kW", "FV tejado"],
+      fr: ["Réseau", "Soutirage 100 W", "en décharge 1,5 kW", "PV toit"] };
+    for (const [lang, [grid, value, bat, roofName]] of Object.entries(expect)) {
+      card.setConfig({ ...cfg, language: lang });
+      card.hass = { states, locale: { language: "de" } };
+      const got = [lab("grid", "title"), lab("grid", "value"), lab("battery", "value"), lab("pv_roof", "title")];
+      check(`language ${lang}`, got.join("|") === [grid, value, bat, roofName].join("|"), got.join("|"));
+    }
+    card.setConfig({ ...cfg, language: undefined });
+    card.hass = { states, locale: { language: "fr" } };
+    check("auto follows HA (fr)", lab("grid", "title") === "Réseau");
+    card.hass = { states, locale: { language: "nl" } };
+    check("unknown language falls back to English", lab("grid", "title") === "Grid");
+    card.setConfig({ ...cfg, language: "de" });
+    card.hass = { states: { ...states, "sensor.s4": { state: "unavailable", attributes: {} } } };
+    check("barn: missing string → –", lab("barn", "value") === "–", lab("barn", "value"));
+
+    // 12. Legacy card element and keys still render
+    const old = document.createElement("hos-energiekarte");
+    document.body.appendChild(old);
+    old.setConfig({ bilder: "../dist/lowpoly", language: "de", netz: { leistung: "sensor.n" }, haus: { leistung: "sensor.h" }, pv_haus: { leistung: "sensor.pv" } });
+    old.hass = { states };
+    check("legacy element renders", old.shadowRoot.querySelector('.label[data-k="pv_roof"] .value').textContent === "3,0 kW");
+
+    // 13. Editor result is usable as a card, and the card offers the editor
+    let error = null;
+    try { document.createElement("unique-energy-card").setConfig(last); } catch (x) { error = x.message; }
+    check("card accepts editor result", error === null, error || "");
+    check("card offers the editor", customElements.get("unique-energy-card").getConfigElement().tagName === "UNIQUE-ENERGY-CARD-EDITOR");
+    check("card picker entry", window.customCards.some((c) => c.type === "unique-energy-card") && !window.customCards.some((c) => c.type === "hos-energiekarte"));
+
+    const ok = results.filter((x) => x[1]).length;
+    document.getElementById("out").innerHTML = `${ok}/${results.length} passed\n` +
+      results.map(([n, b, i]) => `<span class="${b ? "ok" : "fail"}">${b ? "✓" : "✗"} ${n}${!b && i ? " — " + i : ""}</span>`).join("\n");
+  }
+  run().catch((x) => (document.getElementById("out").textContent = "aborted: " + x.message));
+</script>
+</body>
+</html>

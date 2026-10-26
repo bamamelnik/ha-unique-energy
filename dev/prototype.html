@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unique Energy Card prototype</title>
+<style>
+  :root { --bg: #eef0f3; --panel: #fff; --text: #1d2229; --muted: #66707d; --line: #d9dde3; --accent: #2f8cff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15181d; --panel: #1f242b; --text: #e6e9ee; --muted: #9aa3ae; --line: #323843; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, sans-serif; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; padding: 16px; max-width: 1500px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .note { color: var(--muted); margin: 0 0 12px; }
+  .widths { display: flex; gap: 6px; margin: 0 0 10px; flex-wrap: wrap; }
+  .widths button, .scenes button, .languages button { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  .widths button.on, .languages button.on { border-color: var(--accent); color: var(--accent); }
+  #frame { margin: 0 auto; transition: max-width .2s; }
+  aside { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; align-self: start; }
+  aside h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 14px 0 6px; }
+  aside h2:first-child { margin-top: 0; }
+  .row { display: grid; grid-template-columns: 118px 1fr 62px; align-items: center; gap: 8px; margin: 4px 0; }
+  .row output { text-align: right; font-variant-numeric: tabular-nums; }
+  .row.off { opacity: .35; }
+  .switches { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; }
+  .switches label { display: flex; gap: 6px; align-items: center; }
+  .scenes, .languages { display: flex; flex-wrap: wrap; gap: 6px; }
+  input[type=range] { width: 100%; }
+</style>
+</head>
+<body>
+<main>
+  <section>
+    <h1>Unique Energy Card – prototype</h1>
+    <p class="note">Simulated values, real card (<code>dist/ha-unique-energy.js</code>). The grid follows from the balance.</p>
+    <div class="widths">
+      <button data-w="100%" class="on">Full width</button>
+      <button data-w="700px">Tablet column (700 px)</button>
+      <button data-w="380px">Phone (380 px)</button>
+    </div>
+    <div id="frame"></div>
+  </section>
+  <aside>
+    <h2>Language</h2>
+    <div class="languages">
+      <button data-l="de" class="on">Deutsch</button>
+      <button data-l="en">English</button>
+      <button data-l="es">Español</button>
+      <button data-l="fr">Français</button>
+    </div>
+    <h2>Components</h2>
+    <div class="switches" id="switches"></div>
+    <h2>Scenes</h2>
+    <div class="scenes">
+      <button data-s="noon">Sunny noon</button>
+      <button data-s="surplus">PV surplus charging</button>
+      <button data-s="evening">Evening</button>
+      <button data-s="night">Night charging from battery</button>
+    </div>
+    <h2>Values</h2>
+    <div id="sliders"></div>
+  </aside>
+</main>
+
+<script src="../dist/ha-unique-energy.js"></script>
+<script>
+  // Components that can be switched on and off
+  const COMPONENTS = [
+    ["pv_roof", "Roof PV", true], ["pv_balcony", "Balcony PV", true], ["barn", "Barn + PV", true],
+    ["battery", "Home battery", true], ["heat_pump", "Heat pump", true], ["wallbox", "Wallbox", true],
+    ["car_1", "Car 1", true], ["car_2", "Car 2", true],
+  ];
+  // Sliders: key, name, min, max, step, start value, unit, belongs to
+  const SLIDERS = [
+    ["pv_roof", "Roof PV", 0, 10000, 50, 6200, "W", "pv_roof"],
+    ["pv_balcony", "Balcony PV", 0, 800, 10, 520, "W", "pv_balcony"],
+    ["barn", "Barn PV", 0, 5000, 50, 2800, "W", "barn"],
+    ["home", "House load", 0, 8000, 50, 900, "W", null],
+    ["heat_pump", "Heat pump", 0, 3000, 50, 650, "W", "heat_pump"],
+    ["battery", "Battery (+ charging)", -5000, 5000, 50, 2500, "W", "battery"],
+    ["battery_soc", "Battery SOC", 0, 100, 1, 64, "%", "battery"],
+    ["car_1", "Car 1 charging", 0, 11000, 100, 4100, "W", "car_1"],
+    ["car_2", "Car 2 charging", 0, 11000, 100, 0, "W", "car_2"],
+  ];
+  const SCENES = {
+    noon:    { pv_roof: 7400, pv_balcony: 640, barn: 3300, home: 850, heat_pump: 400, battery: 3200, battery_soc: 58, car_1: 0, car_2: 0 },
+    surplus: { pv_roof: 6800, pv_balcony: 600, barn: 3000, home: 700, heat_pump: 300, battery: 600, battery_soc: 92, car_1: 8600, car_2: 0 },
+    evening: { pv_roof: 350, pv_balcony: 20, barn: 120, home: 1900, heat_pump: 1100, battery: -2200, battery_soc: 71, car_1: 0, car_2: 0 },
+    night:   { pv_roof: 0, pv_balcony: 0, barn: 0, home: 350, heat_pump: 0, battery: -3800, battery_soc: 48, car_1: 3450, car_2: 0 },
+  };
+
+  const on = Object.fromEntries(COMPONENTS.map(([k, , v]) => [k, v]));
+  const value = Object.fromEntries(SLIDERS.map((r) => [r[0], r[5]]));
+  let language = "de";
+  const card = document.createElement("unique-energy-card");
+  document.getElementById("frame").appendChild(card);
+
+  const sim = (k) => `sensor.sim_${k}`;
+  function config() {
+    const c = { images: "../dist/lowpoly", language, grid: { power: sim("grid") }, home: { power: sim("home") } };
+    for (const [k] of COMPONENTS) if (on[k]) c[k] = { power: sim(k) };
+    if (on.battery) c.battery.soc = sim("battery_soc");
+    // Roof PV with three strings (east, south, west) — shows the fine line above the total
+    if (on.pv_roof) Object.assign(c.pv_roof, { string_1: sim("pv_s1"), string_2: sim("pv_s2"), string_3: sim("pv_s3") });
+    // the wallbox shows the sum of both cars
+    if (on.wallbox) c.wallbox = { power: sim("wallbox") };
+    return c;
+  }
+  function hass() {
+    const v = (k, enabled = true) => (enabled ? value[k] : 0);
+    const cars = v("car_1", on.car_1) + v("car_2", on.car_2);
+    const production = v("pv_roof", on.pv_roof) + v("pv_balcony", on.pv_balcony) + v("barn", on.barn);
+    const consumption = value.home + v("heat_pump", on.heat_pump) + cars + v("battery", on.battery);
+    const s = { ...value, wallbox: cars, grid: consumption - production,
+                pv_s1: value.pv_roof * 0.3, pv_s2: value.pv_roof * 0.45, pv_s3: value.pv_roof * 0.25 };
+    const states = {};
+    for (const [k, x] of Object.entries(s)) states[sim(k)] = { state: String(x), attributes: { unit_of_measurement: k === "battery_soc" ? "%" : "W" } };
+    return { states };
+  }
+  function apply(rebuild) {
+    if (rebuild) card.setConfig(config());
+    card.hass = hass();
+  }
+
+  // Switches
+  const switches = document.getElementById("switches");
+  for (const [k, name] of COMPONENTS) {
+    const l = document.createElement("label");
+    l.innerHTML = `<input type="checkbox" ${on[k] ? "checked" : ""}> ${name}`;
+    l.querySelector("input").addEventListener("change", (e) => { on[k] = e.target.checked; rows(); apply(true); });
+    switches.appendChild(l);
+  }
+
+  // Sliders
+  const sliders = document.getElementById("sliders");
+  const fmt = (x, unit) => (unit === "%" ? `${x} %` : Math.abs(x) >= 1000 ? `${(x / 1000).toFixed(1)} kW` : `${x} W`);
+  for (const [k, name, min, max, step, , unit, belongs] of SLIDERS) {
+    const r = document.createElement("div");
+    r.className = "row";
+    r.dataset.b = belongs || "";
+    r.innerHTML = `<span>${name}</span><input type="range" min="${min}" max="${max}" step="${step}" value="${value[k]}"><output></output>`;
+    const inp = r.querySelector("input"), out = r.querySelector("output");
+    out.textContent = fmt(value[k], unit);
+    inp.addEventListener("input", () => { value[k] = +inp.value; out.textContent = fmt(value[k], unit); apply(false); });
+    r._set = (x) => { inp.value = x; value[k] = x; out.textContent = fmt(x, unit); };
+    r._k = k;
+    sliders.appendChild(r);
+  }
+  function rows() {
+    for (const r of sliders.children) r.classList.toggle("off", !!r.dataset.b && !on[r.dataset.b]);
+  }
+
+  document.querySelectorAll(".scenes button").forEach((b) => b.addEventListener("click", () => {
+    const s = SCENES[b.dataset.s];
+    for (const r of sliders.children) if (r._k in s) r._set(s[r._k]);
+    apply(false);
+  }));
+  document.querySelectorAll(".widths button").forEach((b) => b.addEventListener("click", () => {
+    document.querySelectorAll(".widths button").forEach((x) => x.classList.toggle("on", x === b));
+    document.getElementById("frame").style.maxWidth = b.dataset.w;
+  }));
+  document.querySelectorAll(".languages button").forEach((b) => b.addEventListener("click", () => {
+    document.querySelectorAll(".languages button").forEach((x) => x.classList.toggle("on", x === b));
+    language = b.dataset.l;
+    apply(true);
+  }));
+
+  rows();
+  apply(true);
+</script>
+</body>
+</html>
