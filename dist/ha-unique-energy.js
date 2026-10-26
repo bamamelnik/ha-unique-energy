@@ -13,7 +13,7 @@
  * charging flow away from it.
  */
 (() => {
-  const VERSION = "0.7.0"; // also appended to image URLs: bump it when images change
+  const VERSION = "0.7.1"; // also appended to image URLs: bump it when images change
 
   // Layout per image set. Paths in image pixels, only M/L/Q/C (also read by
   // tools/path_preview.py — the block between the markers must stay valid JSON).
@@ -376,13 +376,14 @@
           // the difference of two meters can briefly drop below zero
           const w = this._watts(this._config.home);
           value = w === null ? "–" : fmt(Math.max(0, w));
-          details = this._topConsumers().map((c) => `${c.name} ${fmt(c.w)}`);
+          // name and power separately: a long name is shortened, the power always stays visible
+          details = this._topConsumers().map((c) => [c.name, fmt(c.w)]);
         } else {
           const v = this._values(n);
           title = v.name || t.names[n];
           if (v.count > 1) title += ` ×${v.count}`;
           if (v.soc !== null) title += ` · ${Math.round(v.soc)} %`;
-          if (v.socMin !== null) title += ` (${t.min} ${Math.round(v.socMin)} %)`;
+          if (v.socMin !== null) title += `\n${t.min} ${Math.round(v.socMin)} %`; // second line
           if (v.w === null) value = "–";
           else if (n === "grid") value = Math.abs(v.w) < IDLE_W ? "0 W" : `${v.w < 0 ? t.export : t.import} ${fmt(v.w)}`;
           else if (n === "battery") value = Math.abs(v.w) < IDLE_W ? t.idle : `${v.w > 0 ? t.charging : t.discharging} ${fmt(v.w)}`;
@@ -393,10 +394,16 @@
             const parts = [];
             if (price) parts.push(formatMoney(price.v, price.unit, t.locale));
             if (cost) parts.push(`${t.today} ${formatMoney(cost.v, cost.unit, t.locale)}`);
-            if (parts.length) details = [parts.join(" · ")];
+            details = parts; // one line each
           }
         }
-        el.querySelector(".details").replaceChildren(...details.map((line) => Object.assign(document.createElement("span"), { textContent: line })));
+        const span = (className, textContent) => Object.assign(document.createElement("span"), { className, textContent });
+        el.querySelector(".details").replaceChildren(...details.map((line) => {
+          if (!Array.isArray(line)) return span("line", line);
+          const row = span("line", "");
+          row.append(span("name", line[0]), span("power", line[1]));
+          return row;
+        }));
         el.querySelector(".title").textContent = title;
         el.querySelector(".value").textContent = value;
       }
@@ -573,12 +580,14 @@
              padding: 3px 8px; border-radius: 8px; background: rgba(24, 28, 36, 0.78); color: #fff; cursor: pointer;
              font: 500 clamp(9px, 1.6cqi, 14px)/1.25 var(--ha-font-family-body, system-ui, sans-serif); white-space: nowrap;
              backdrop-filter: blur(2px); }
-    .label .title { opacity: 0.75; font-size: 0.85em; }
+    .label .title { opacity: 0.75; font-size: 0.85em; white-space: pre-line; text-align: center; }
     .label .value { font-weight: 600; }
     .label .strings { font-weight: 400; font-size: 0.78em; opacity: 0.85; letter-spacing: 0.01em; }
     .label .strings:empty, .label .details:empty { display: none; }
     .label .details { display: flex; flex-direction: column; align-items: center; font-weight: 400; font-size: 0.74em; opacity: 0.8; margin-top: 1px; }
-    .label.home .details span { max-width: 18ch; overflow: hidden; text-overflow: ellipsis; }
+    .label.home .details .line { display: flex; gap: 0.35em; max-width: 20ch; }
+    .label.home .details .name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .label.home .details .power { flex: none; }
     /* anchored at its top: the consumer lines grow downwards, away from the labels above */
     .label.home { background: rgba(24, 28, 36, 0.88); transform: translate(-50%, calc(-1.3em - 3px)); }
     @container (max-width: 520px) { .label .title, .label .strings, .label .details { display: none; } .label { padding: 2px 5px; } }

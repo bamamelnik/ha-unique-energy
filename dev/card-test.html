@@ -179,17 +179,20 @@ Open in a browser or run headless; the result is in <code>#out</code>.</p>
       battery: { power: "sensor.bat", soc: "sensor.soc", soc_min: "number.min_soc" } };
     card.setConfig(extra);
     card.hass = { states: st2 };
-    const det = (k) => [...card.shadowRoot.querySelectorAll(`.label[data-k="${k}"] .details span`)].map((x) => x.textContent);
-    check("grid: price and cost today", det("grid").join("|") === "0,48 €/kWh · heute 2,14 €", det("grid").join("|"));
-    check("battery: minimum SOC next to SOC", lab("battery", "title") === "Akku · 64 % (min. 10 %)", lab("battery", "title"));
+    const det = (k) => [...card.shadowRoot.querySelectorAll(`.label[data-k="${k}"] .details > .line`)]
+      .map((x) => (x.children.length ? [...x.children].map((c) => c.textContent).join(" ") : x.textContent));
+    check("grid: price and cost today", det("grid").join("|") === "0,48 €/kWh|heute 2,14 €", det("grid").join("|"));
+    check("battery: minimum SOC on a second line", lab("battery", "title") === "Akku · 64 %\nmin. 10 %", lab("battery", "title"));
     check("home: top 3 consumers, largest first, idle and missing left out", det("home").join("|") === "Herd 1,2 kW|Server 165 W|HWR Dose Waschmaschine 152 W", det("home").join("|"));
+    const pw = card.shadowRoot.querySelector('.label[data-k="home"] .details .power');
+    check("home: consumer power in its own element that never shrinks", pw && getComputedStyle(pw).flexShrink === "0");
     const homeOrder = [...card.shadowRoot.querySelector('.label[data-k="home"]').children].map((x) => x.className);
     check("home: details below the value", homeOrder.join() === "title,value,details", homeOrder.join());
     check("labels without extras: details empty", det("pv_roof").length === 0 || !card.shadowRoot.querySelector('.label[data-k="pv_roof"]'));
     card.setConfig({ ...extra, language: "en" });
-    check("grid tariff in English", det("grid").join("|") === "0.48 €/kWh · today 2.14 €", det("grid").join("|"));
+    check("grid tariff in English", det("grid").join("|") === "0.48 €/kWh|today 2.14 €", det("grid").join("|"));
     card.setConfig({ ...extra, language: "fr" });
-    check("minimum SOC in French", lab("battery", "title") === "Batterie · 64 % (min. 10 %)", lab("battery", "title"));
+    check("minimum SOC in French", lab("battery", "title") === "Batterie · 64 %\nmin. 10 %", lab("battery", "title"));
     card.setConfig({ ...extra, grid: { power: "sensor.n" } });
     check("grid without tariff: no details", det("grid").length === 0);
 

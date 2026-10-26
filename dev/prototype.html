@@ -102,7 +102,7 @@
   function config() {
     const c = { images: "../dist/lowpoly", language,
       grid: { power: sim("grid"), price: sim("price"), cost: sim("cost") },
-      home: { power: sim("home"), consumers: [sim("oven"), { entity: sim("washer"), name: "Washer" }, sim("server"), sim("tv")] } };
+      home: { power: sim("home"), consumers: [sim("oven"), { entity: sim("washer"), name: "Washing machine + dryer" }, sim("server"), sim("tv")] } };
     for (const [k] of COMPONENTS) if (on[k]) c[k] = { power: sim(k) };
     if (on.battery) Object.assign(c.battery, { soc: sim("battery_soc"), soc_min: sim("battery_soc_min") });
     // Roof PV with three strings (east, south, west) — shows the fine line above the total
