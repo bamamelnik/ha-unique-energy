@@ -140,7 +140,7 @@ Open in a browser or run headless; the result is in <code>#out</code>.</p>
     check("barn: sum from strings", lab("barn", "value") === "3,3 kW", lab("barn", "value"));
     check("balcony without strings: empty line", lab("pv_balcony", "strings") === "");
     const order = [...card.shadowRoot.querySelector('.label[data-k="pv_roof"]').children].map((x) => x.className);
-    check("order title, strings, value", order.join() === "title,strings,value", order.join());
+    check("order title, strings, value, details", order.join() === "title,strings,value,details", order.join());
     check("German: language wins over HA", lab("grid", "value") === "Bezug 100 W" && lab("battery", "value") === "entlädt 1,5 kW", lab("grid", "value") + " / " + lab("battery", "value"));
     const expect = { en: ["Grid", "Import 100 W", "discharging 1.5 kW", "Roof PV"], es: ["Red", "Importación 100 W", "descargando 1,5 kW", "FV tejado"],
       fr: ["Réseau", "Soutirage 100 W", "en décharge 1,5 kW", "PV toit"] };
@@ -158,6 +158,56 @@ Open in a browser or run headless; the result is in <code>#out</code>.</p>
     card.setConfig({ ...cfg, language: "de" });
     card.hass = { states: { ...states, "sensor.s4": { state: "unavailable", attributes: {} } } };
     check("barn: missing string → –", lab("barn", "value") === "–", lab("barn", "value"));
+
+    // 11b. Tariff at the grid, minimum SOC at the battery, top consumers at the home
+    const st2 = {
+      "sensor.n": watts(300), "sensor.h": watts(1800), "sensor.bat": watts(-900),
+      "sensor.soc": { state: "64", attributes: { unit_of_measurement: "%" } },
+      "number.min_soc": { state: "10", attributes: { unit_of_measurement: "%" } },
+      "sensor.price": { state: "0.477", attributes: { unit_of_measurement: "EUR/kWh" } },
+      "sensor.cost": { state: "2.142248", attributes: { unit_of_measurement: "EUR" } },
+      "sensor.washer": { state: "152", attributes: { unit_of_measurement: "W", friendly_name: "HWR Dose Waschmaschine Leistung" } },
+      "sensor.server": { state: "165.1", attributes: { unit_of_measurement: "W", friendly_name: "Serverschrank Leistung" } },
+      "sensor.oven": { state: "1.2", attributes: { unit_of_measurement: "kW", friendly_name: "Herd" } },
+      "sensor.tv": { state: "0", attributes: { unit_of_measurement: "W", friendly_name: "TV" } },
+      "sensor.echo": { state: "1.7", attributes: { unit_of_measurement: "W", friendly_name: "Echo" } },
+      "sensor.gone": { state: "unavailable", attributes: { unit_of_measurement: "W" } },
+    };
+    const extra = { images: "../dist/lowpoly", language: "de",
+      grid: { power: "sensor.n", price: "sensor.price", cost: "sensor.cost" },
+      home: { power: "sensor.h", consumers: ["sensor.washer", { entity: "sensor.server", name: "Server" }, "sensor.oven", "sensor.tv", "sensor.echo", "sensor.gone"] },
+      battery: { power: "sensor.bat", soc: "sensor.soc", soc_min: "number.min_soc" } };
+    card.setConfig(extra);
+    card.hass = { states: st2 };
+    const det = (k) => [...card.shadowRoot.querySelectorAll(`.label[data-k="${k}"] .details span`)].map((x) => x.textContent);
+    check("grid: price and cost today", det("grid").join("|") === "0,48 €/kWh · heute 2,14 €", det("grid").join("|"));
+    check("battery: minimum SOC next to SOC", lab("battery", "title") === "Akku · 64 % (min. 10 %)", lab("battery", "title"));
+    check("home: top 3 consumers, largest first, idle and missing left out", det("home").join("|") === "Herd 1,2 kW|Server 165 W|HWR Dose Waschmaschine 152 W", det("home").join("|"));
+    const homeOrder = [...card.shadowRoot.querySelector('.label[data-k="home"]').children].map((x) => x.className);
+    check("home: details below the value", homeOrder.join() === "title,value,details", homeOrder.join());
+    check("labels without extras: details empty", det("pv_roof").length === 0 || !card.shadowRoot.querySelector('.label[data-k="pv_roof"]'));
+    card.setConfig({ ...extra, language: "en" });
+    check("grid tariff in English", det("grid").join("|") === "0.48 €/kWh · today 2.14 €", det("grid").join("|"));
+    card.setConfig({ ...extra, language: "fr" });
+    check("minimum SOC in French", lab("battery", "title") === "Batterie · 64 % (min. 10 %)", lab("battery", "title"));
+    card.setConfig({ ...extra, grid: { power: "sensor.n" } });
+    check("grid without tariff: no details", det("grid").length === 0);
+
+    // 11c. Editor fields for the extras
+    ed.setConfig({ ...copy(BASE), home: { power: "sensor.house", consumers: ["sensor.a", { entity: "sensor.b", name: "Bee" }] } });
+    const sch = (k) => form.schema.find((s) => s.name === k).schema;
+    check("editor: grid has price and cost", ["price", "cost"].every((f) => sch("grid").some((s) => s.name === f)));
+    check("editor: soc_min accepts number entities", sch("battery").find((s) => s.name === "soc_min").selector.entity.filter.domain.includes("number"));
+    check("editor: consumers are a multiple entity field", sch("home").find((s) => s.name === "consumers").selector.entity.multiple === true);
+    check("editor: consumers shown as entity ids", JSON.stringify(form.data.home.consumers) === '["sensor.a","sensor.b"]');
+    e = copy(form.data); e.home.consumers = ["sensor.b", "sensor.c"]; e.grid.price = "sensor.price"; e.battery.soc_min = "number.min_soc";
+    form.input(e);
+    check("editor: consumer names from YAML kept, new ids added", JSON.stringify(last.home.consumers) === '[{"entity":"sensor.b","name":"Bee"},"sensor.c"]', JSON.stringify(last.home.consumers));
+    check("editor: price and soc_min saved", last.grid.price === "sensor.price" && last.battery.soc_min === "number.min_soc");
+    e = copy(form.data); e.home.consumers = [];
+    form.input(e);
+    check("editor: empty consumer list removed", !("consumers" in last.home));
+    check("editor: consumers label German", form.computeLabel({ name: "consumers" }) === "Verbraucher (optional)");
 
     // 12. Legacy card element and keys still render
     const old = document.createElement("hos-energiekarte");

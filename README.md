@@ -25,12 +25,13 @@ type: custom:unique-energy-card
 images: /hacsfiles/ha-unique-energy/lowpoly   # image set shipped with the card
 title: Energy                                 # optional
 language: auto                                # auto (follows Home Assistant), de, en, es, fr
-grid:       { power: sensor.grid_power }            # + = import, − = export
-home:       { power: sensor.house_power, subtract: sensor.wallbox_power }
+grid:       { power: sensor.grid_power, price: sensor.electricity_price, cost: sensor.cost_today }   # + = import, − = export
+home:       { power: sensor.house_power, subtract: sensor.wallbox_power,
+              consumers: [sensor.oven_power, { entity: sensor.washer_power, name: Washer }] }
 pv_roof:    { power: sensor.pv_roof_power, string_1: sensor.pv_dc1, string_2: sensor.pv_dc2 }
 pv_balcony: { power: sensor.balcony_pv_power }
 barn:       { power: sensor.barn_pv_power }          # barn including its PV
-battery:    { power: sensor.battery_power, soc: sensor.battery_soc }   # + = charging
+battery:    { power: sensor.battery_power, soc: sensor.battery_soc, soc_min: number.battery_min_soc }   # + = charging
 heat_pump:  { power: sensor.heat_pump_power }
 wallbox:    { power: sensor.wallbox_power }
 car_1:      { name: My car, soc: sensor.car_soc }    # without power: uses the wallbox
@@ -46,6 +47,9 @@ Grid and home are part of the base image.
 | `invert` | `true` flips the sign |
 | `subtract` | entity (or list) subtracted before the sign is applied; if one is unavailable the card shows “–” |
 | `soc` | state of charge in % (battery, cars) |
+| `soc_min` | battery only: minimum state of charge (sensor, `number` or `input_number`), shown next to the SOC |
+| `price`, `cost` | grid only: electricity price per kWh and today's cost (e.g. from Tibber), shown in a fine line below the value; `EUR` is shown as `€` |
+| `consumers` | home only: list of power sensors (or `{ entity, name }`); the three largest active ones are shown below the house value. Without a name the friendly name is used, minus a trailing “power” |
 | `string_1` … `string_3` | PV only: up to three string sensors, shown in a smaller line above the total; without `power` their sum is the total |
 | `name` | label text; without it the card uses the translated default |
 | `show` | `false` hides the component but keeps its settings |
