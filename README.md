@@ -94,14 +94,6 @@ node** at the house. The layout block must stay valid JSON.
 run the test, commit, then publish a GitHub release `v<VERSION>` — HACS needs a
 release, a tag alone is not enough.
 
-## Credits
-
-The idea of animated flows over a house picture is inspired by
-[Lumina Energy Card](https://github.com/Giorgio866/lumina-energy-card). This card
-is an independent implementation: no code or graphics were taken from it. The
-images were generated with an AI image model for this project and carry its
-C2PA provenance data.
-
 ## License
 
 MIT, see [LICENSE](LICENSE).
