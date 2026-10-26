@@ -1,4 +1,4 @@
-# ha-unique-energy
+# Unique Energy Card
 
 A Home Assistant dashboard card that shows live energy flows — PV, grid, home
 battery, heat pump, wallbox and up to two cars — as animated dots over a
@@ -14,7 +14,7 @@ editor and speaks **German, English, Spanish and French**.
 ## Installation (HACS)
 
 1. HACS → ⋮ → *Custom repositories* → `https://github.com/bamamelnik/ha-unique-energy`, type *Dashboard*.
-2. Download *ha-unique-energy*. HACS registers the resource
+2. Download *Unique Energy Card*. HACS registers the resource
    `/hacsfiles/ha-unique-energy/ha-unique-energy.js` for you.
 3. Add the card *Unique Energy Card* to a dashboard and configure it in the editor.
 

@@ -13,7 +13,7 @@
  * charging flow away from it.
  */
 (() => {
-  const VERSION = "0.6.0"; // also appended to image URLs: bump it when images change
+  const VERSION = "0.6.1"; // also appended to image URLs: bump it when images change
 
   // Layout per image set. Paths in image pixels, only M/L/Q/C (also read by
   // tools/path_preview.py — the block between the markers must stay valid JSON).
