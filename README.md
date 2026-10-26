@@ -52,6 +52,7 @@ Grid and home are part of the base image.
 | `consumers` | home only: list of power sensors (or `{ entity, name }`); the three largest active ones are shown below the house value. Without a name the friendly name is used, minus a trailing “power” |
 | `string_1` … `string_3` | PV only: up to three string sensors, shown in a smaller line above the total; without `power` their sum is the total |
 | `name` | label text; without it the card uses the translated default |
+| `tap_action` | what a tap on the label does, as in Home Assistant's own cards (`navigate`, `more-info`, `perform-action`, `url`, …); without it the label opens the more-info dialog of its sensor. Example: `tap_action: { action: navigate, navigation_path: "#car" }` opens a Bubble Card pop-up |
 | `show` | `false` hides the component but keeps its settings |
 
 `battery` may also be a list of batteries (summed); the editor leaves such a list

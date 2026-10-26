@@ -13,7 +13,7 @@
  * charging flow away from it.
  */
 (() => {
-  const VERSION = "0.7.1"; // also appended to image URLs: bump it when images change
+  const VERSION = "0.8.0"; // also appended to image URLs: bump it when images change
 
   // Layout per image set. Paths in image pixels, only M/L/Q/C (also read by
   // tools/path_preview.py — the block between the markers must stay valid JSON).
@@ -341,7 +341,16 @@
 
       this.shadowRoot.querySelectorAll(".label").forEach((el) => {
         el.addEventListener("click", () => {
-          const v = el.dataset.k === "home" ? { entity: this._config.home.power } : this._values(el.dataset.k);
+          const k = el.dataset.k;
+          const v = k === "home" ? { entity: this._config.home.power } : this._values(k);
+          const c = this._config[k];
+          const tap = c && !Array.isArray(c) ? c.tap_action : undefined;
+          // own tap_action: Home Assistant runs it (navigate, more-info, perform-action, …)
+          if (tap) {
+            const config = { entity: v.entity, tap_action: tap };
+            this.dispatchEvent(new CustomEvent("hass-action", { detail: { config, action: "tap" }, bubbles: true, composed: true }));
+            return;
+          }
           if (!v.entity) return;
           this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: v.entity }, bubbles: true, composed: true }));
         });

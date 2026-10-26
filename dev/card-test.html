@@ -212,6 +212,28 @@ Open in a browser or run headless; the result is in <code>#out</code>.</p>
     check("editor: empty consumer list removed", !("consumers" in last.home));
     check("editor: consumers label German", form.computeLabel({ name: "consumers" }) === "Verbraucher (optional)");
 
+    // 11b. Tap on a label: own tap_action goes to HA as hass-action, otherwise more-info
+    const tapCard = document.createElement("unique-energy-card");
+    document.body.appendChild(tapCard);
+    tapCard.setConfig({ images: "../dist/lowpoly", grid: { power: "sensor.n" }, home: { power: "sensor.h" }, wallbox: { power: "sensor.b" },
+      car_1: { soc: "sensor.s1", tap_action: { action: "navigate", navigation_path: "#car" } } });
+    tapCard.hass = { states, locale: { language: "en" } };
+    const events = [];
+    for (const type of ["hass-action", "hass-more-info"]) tapCard.addEventListener(type, (ev) => events.push([type, ev.detail]));
+    const tapLabel = (k) => { events.length = 0; tapCard.shadowRoot.querySelector(`.label[data-k="${k}"]`).click(); return events[0] || []; };
+    let [type, detail] = tapLabel("car_1");
+    check("tap_action: fires hass-action", type === "hass-action" && events.length === 1, JSON.stringify(events));
+    check("tap_action: config and action passed on", detail && detail.action === "tap" && detail.config.tap_action.navigation_path === "#car" && detail.config.entity === "sensor.s1", JSON.stringify(detail));
+    [type, detail] = tapLabel("grid");
+    check("without tap_action: more-info as before", type === "hass-more-info" && detail.entityId === "sensor.n", JSON.stringify(events));
+    [type, detail] = tapLabel("home");
+    check("home without tap_action: more-info", type === "hass-more-info" && detail.entityId === "sensor.h", JSON.stringify(events));
+
+    ed.setConfig({ ...copy(BASE), car_1: { name: "My car", soc: "sensor.car_soc", tap_action: { action: "navigate", navigation_path: "#car" } } });
+    e = copy(form.data); e.car_1.name = "Car";
+    form.input(e);
+    check("editor keeps tap_action", last.car_1.name === "Car" && last.car_1.tap_action && last.car_1.tap_action.navigation_path === "#car", JSON.stringify(last.car_1));
+
     // 12. Legacy card element and keys still render
     const old = document.createElement("hos-energiekarte");
     document.body.appendChild(old);
